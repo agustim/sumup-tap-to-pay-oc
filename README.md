@@ -46,8 +46,9 @@ npx cap sync android
 
 ## Configuració
 
-El token de SumUp es desa al dispositiu (`SharedPreferences`) des d'una pantalla
-nativa; no passa mai pel bundle web.
+El plugin porta un token de SumUp i una affiliate key per defecte, així que
+l'app funciona sense configurar res. `openConfiguration()` permet canviar-los;
+el valor desat al dispositiu té prioritat sobre el per defecte.
 
 ```ts
 import { SumUpTapToPay } from 'sumup-tap-to-pay-oc';
@@ -64,6 +65,7 @@ await SumUpTapToPay.initialize();
 * [`isConfigured()`](#isconfigured)
 * [`openConfiguration()`](#openconfiguration)
 * [`initialize()`](#initialize)
+* [`ensurePermissions()`](#ensurepermissions)
 * [`startPayment(...)`](#startpayment)
 * [`tearDown()`](#teardown)
 * [`addListener('paymentEvent', ...)`](#addlistenerpaymentevent)
@@ -119,6 +121,23 @@ immediatament amb `ready: true`.
 **Returns:** <code>Promise&lt;<a href="#initializeresult">InitializeResult</a>&gt;</code>
 
 **Since:** 0.1.0
+
+--------------------
+
+
+### ensurePermissions()
+
+```typescript
+ensurePermissions() => Promise<PermissionsResult>
+```
+
+Demana els permisos d'execució que necessita l'SDK (càmera i ubicació).
+`startPayment` ja els demana si falten; aquest mètode serveix per fer-ho
+abans, per exemple en arrencar l'app.
+
+**Returns:** <code>Promise&lt;<a href="#permissionsresult">PermissionsResult</a>&gt;</code>
+
+**Since:** 0.1.2
 
 --------------------
 
@@ -215,6 +234,13 @@ Elimina tots els listeners registrats.
 | Prop        | Type                 |
 | ----------- | -------------------- |
 | **`ready`** | <code>boolean</code> |
+
+
+#### PermissionsResult
+
+| Prop          | Type                 |
+| ------------- | -------------------- |
+| **`granted`** | <code>boolean</code> |
 
 
 #### PaymentResult

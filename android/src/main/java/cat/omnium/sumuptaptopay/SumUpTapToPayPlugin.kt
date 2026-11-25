@@ -8,8 +8,11 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.PermissionState
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import com.sumup.taptopay.TapToPay
 import com.sumup.taptopay.TapToPayApiProvider
 import com.sumup.taptopay.auth.AuthTokenProvider
@@ -27,8 +30,29 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
 
-@CapacitorPlugin(name = "SumUpTapToPay")
+/**
+ * L'SDK de SumUp exigeix càmera (llegir la targeta) i ubicació (seguretat de la
+ * transacció) en temps d'execució. L'SDK només les declara al manifest, així
+ * que és el plugin qui les ha de demanar.
+ */
+@CapacitorPlugin(
+    name = "SumUpTapToPay",
+    permissions = [
+        Permission(
+            alias = "camera",
+            strings = ["android.permission.CAMERA"],
+        ),
+        Permission(
+            alias = "location",
+            strings = ["android.permission.ACCESS_COARSE_LOCATION"],
+        ),
+    ],
+)
 class SumUpTapToPayPlugin : Plugin() {
+    companion object {
+        private const val CAMERA_ALIAS = "camera"
+        private const val LOCATION_ALIAS = "location"
+    }
 
     private var tapToPay: TapToPay? = null
     private var initialized = false
@@ -39,14 +63,49 @@ class SumUpTapToPayPlugin : Plugin() {
     private val prefs
         get() = getContext().getSharedPreferences(Prefs.FILE, Context.MODE_PRIVATE)
 
+    /** Token desat al dispositiu o, si no n'hi ha, el valor per defecte. */
+    private val token: String
+        get() = prefs.getString(Prefs.KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
+            ?: Prefs.DEFAULT_TOKEN
+
     @PluginMethod
     fun isConfigured(call: PluginCall) {
-        val token = prefs.getString(Prefs.KEY_TOKEN, null)
         call.resolve(
             JSObject()
-                .put("configured", !token.isNullOrBlank())
+                .put("configured", token.isNotBlank())
                 .put("affiliateKey", prefs.getString(Prefs.KEY_AFFILIATE, Prefs.DEFAULT_AFFILIATE)),
         )
+    }
+
+    /** Indica si l'SDK ja pot llegir la targeta (càmera i ubicació concedides). */
+    private fun hasPaymentPermissions(): Boolean =
+        getPermissionState(CAMERA_ALIAS) == PermissionState.GRANTED &&
+            getPermissionState(LOCATION_ALIAS) == PermissionState.GRANTED
+
+    @PluginMethod
+    fun ensurePermissions(call: PluginCall) {
+        if (hasPaymentPermissions()) return resolvePermissions(call)
+        requestPermissionForAliases(
+            arrayOf(CAMERA_ALIAS, LOCATION_ALIAS),
+            call,
+            "checkPaymentPermissions",
+        )
+    }
+
+    @PermissionCallback
+    private fun checkPaymentPermissions(call: PluginCall) {
+        if (hasPaymentPermissions()) {
+            resolvePermissions(call)
+        } else {
+            call.reject(
+                "Cal permetre la càmera i la ubicació per cobrar amb el mòbil",
+                "PERMISSIONS_DENIED",
+            )
+        }
+    }
+
+    private fun resolvePermissions(call: PluginCall) {
+        call.resolve(JSObject().put("granted", true))
     }
 
     @PluginMethod
@@ -83,8 +142,6 @@ class SumUpTapToPayPlugin : Plugin() {
 
     @PluginMethod
     fun initialize(call: PluginCall) {
-        val token = prefs.getString(Prefs.KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
-            ?: return call.reject("Cal configurar el token de SumUp", "NOT_CONFIGURED")
         if (initialized) return call.resolve(JSObject().put("ready", true))
         val sdk = tapToPay ?: TapToPayApiProvider.provide(getContext().applicationContext).also {
             tapToPay = it
@@ -119,10 +176,34 @@ class SumUpTapToPayPlugin : Plugin() {
         if (paymentJob?.isActive == true) {
             return call.reject("Ja hi ha un pagament en curs", "PAYMENT_IN_PROGRESS")
         }
-        val total = call.getLong("total") ?: return call.reject("Falta el total", "INVALID_AMOUNT")
+        val total = readCents(call, "total") ?: return call.reject("Falta el total", "INVALID_AMOUNT")
         if (total <= 0L) {
             return call.reject("El total ha de ser positiu (cèntims)", "INVALID_AMOUNT")
         }
+        if (!hasPaymentPermissions()) {
+            return requestPermissionForAliases(
+                arrayOf(CAMERA_ALIAS, LOCATION_ALIAS),
+                call,
+                "startPaymentWithPermissions",
+            )
+        }
+        launchPayment(sdk, call, total)
+    }
+
+    @PermissionCallback
+    private fun startPaymentWithPermissions(call: PluginCall) {
+        val total = readCents(call, "total")
+        val sdk = tapToPay
+        if (sdk == null || total == null || !hasPaymentPermissions()) {
+            return call.reject(
+                "Cal permetre la càmera i la ubicació per cobrar amb el mòbil",
+                "PERMISSIONS_DENIED",
+            )
+        }
+        launchPayment(sdk, call, total)
+    }
+
+    private fun launchPayment(sdk: TapToPay, call: PluginCall, total: Long) {
         val affiliate = prefs.getString(Prefs.KEY_AFFILIATE, Prefs.DEFAULT_AFFILIATE)
             ?.takeIf { it.isNotBlank() } ?: Prefs.DEFAULT_AFFILIATE
         val ftid = call.getString("foreignTransactionId")?.takeIf { it.isNotBlank() }
@@ -211,6 +292,20 @@ class SumUpTapToPayPlugin : Plugin() {
         initJob?.cancel()
         scope.cancel()
     }
+
+    /**
+     * Llegeix un import en cèntims enviat des de JS.
+     *
+     * `PluginCall.getLong` només accepta un `java.lang.Long`, però el pont de
+     * Capacitor desserialitza els enters de JSON com a `Integer`, així que
+     * rebutja imports vàlids. Aquí s'accepta qualsevol número o cadena numèrica.
+     */
+    private fun readCents(call: PluginCall, key: String): Long? =
+        when (val value = call.data.opt(key)) {
+            is Number -> value.toLong()
+            is String -> value.trim().toDoubleOrNull()?.toLong()
+            else -> null
+        }
 
     private fun errorJs(e: Throwable): JSObject =
         JSObject()

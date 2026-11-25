@@ -5,6 +5,7 @@ import type {
   ConfiguredResult,
   InitializeResult,
   PaymentResult,
+  PermissionsResult,
   StartPaymentOptions,
   SumUpTapToPayPlugin,
 } from './definitions';
@@ -26,6 +27,10 @@ export class SumUpTapToPayWeb extends WebPlugin implements SumUpTapToPayPlugin {
   }
 
   async initialize(): Promise<InitializeResult> {
+    throw this.unimplemented('SumUp Tap to Pay només funciona en Android.');
+  }
+
+  async ensurePermissions(): Promise<PermissionsResult> {
     throw this.unimplemented('SumUp Tap to Pay només funciona en Android.');
   }
 

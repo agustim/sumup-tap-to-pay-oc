@@ -26,6 +26,15 @@ export interface SumUpTapToPayPlugin {
   initialize(): Promise<InitializeResult>;
 
   /**
+   * Demana els permisos d'execució que necessita l'SDK (càmera i ubicació).
+   * `startPayment` ja els demana si falten; aquest mètode serveix per fer-ho
+   * abans, per exemple en arrencar l'app.
+   *
+   * @since 0.1.2
+   */
+  ensurePermissions(): Promise<PermissionsResult>;
+
+  /**
    * Inicia un cobrament amb targeta sense contacte.
    *
    * Els esdeveniments intermedis (`CardRequested`, `CardPresented`,
@@ -72,6 +81,10 @@ export interface ConfigurationResult {
 
 export interface InitializeResult {
   ready: boolean;
+}
+
+export interface PermissionsResult {
+  granted: boolean;
 }
 
 export interface StartPaymentOptions {
