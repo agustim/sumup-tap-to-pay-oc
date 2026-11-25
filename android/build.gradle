@@ -12,10 +12,12 @@ buildscript {
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
-def mavenUser = System.getenv('TAP_TO_PAY_MAVEN_USER')
-def mavenPass = System.getenv('TAP_TO_PAY_MAVEN_PASSWORD')
+// Credencials del repositori Maven privat del SDK de SumUp Tap to Pay.
+// Propietats de Gradle (p. ex. ~/.gradle/gradle.properties, fora del repo) o entorn.
+def mavenUser = project.findProperty('tapToPayMavenUser') ?: System.getenv('TAP_TO_PAY_MAVEN_USER')
+def mavenPass = project.findProperty('tapToPayMavenPassword') ?: System.getenv('TAP_TO_PAY_MAVEN_PASSWORD')
 if (!mavenUser || !mavenPass) {
-    throw new GradleException("Falten TAP_TO_PAY_MAVEN_USER i TAP_TO_PAY_MAVEN_PASSWORD (credencials Maven de SumUp per a com.sumup.tap-to-pay:utopia-sdk).")
+    throw new GradleException("Falten les credencials Maven de SumUp: defineix tapToPayMavenUser/tapToPayMavenPassword a ~/.gradle/gradle.properties o TAP_TO_PAY_MAVEN_USER/TAP_TO_PAY_MAVEN_PASSWORD a l'entorn.")
 }
 
 repositories {

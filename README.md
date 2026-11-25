@@ -12,16 +12,19 @@ pagament es fa contra el compte de SumUp configurat.
 - `compileSdkVersion 35` i Java 17 a l'app.
 - Desugaring activat al mòdul `app` (`coreLibraryDesugaringEnabled true` +
   `com.android.tools:desugar_jdk_libs:2.1.5`).
-- Credencials Maven de SumUp per resoldre l'SDK (repositori privat):
+- Credencials Maven de SumUp per resoldre l'SDK (repositori privat). Es
+  llegeixen primer de les propietats de Gradle i, si no hi són, de l'entorn.
+  Desa-les **fora del repo**, a `~/.gradle/gradle.properties`:
 
-  ```bash
-  export TAP_TO_PAY_MAVEN_USER=...
-  export TAP_TO_PAY_MAVEN_PASSWORD=...
+  ```properties
+  tapToPayMavenUser=...
+  tapToPayMavenPassword=...
   ```
 
-  Sense aquestes variables el build falla a `android/build.gradle` amb un
-  `GradleException` explícit. El repositori públic `maven.sumup.com/releases`
-  **no** serveix `utopia-sdk`.
+  Alternativa per CI/Docker: `TAP_TO_PAY_MAVEN_USER` i
+  `TAP_TO_PAY_MAVEN_PASSWORD` a l'entorn. Sense cap de les dues el build falla
+  a `android/build.gradle` amb un `GradleException` explícit. El repositori
+  públic `maven.sumup.com/releases` **no** serveix `utopia-sdk`.
 
 - Per cobrar de veritat: build **no debuggable**, opcions de desenvolupador i
   USB debugging desactivats al dispositiu (si no, l'atestació falla i l'SDK
