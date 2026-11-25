@@ -1,0 +1,73 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://plugins.gradle.org/m2/' }
+    }
+    dependencies {
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+def mavenUser = System.getenv('TAP_TO_PAY_MAVEN_USER')
+def mavenPass = System.getenv('TAP_TO_PAY_MAVEN_PASSWORD')
+if (!mavenUser || !mavenPass) {
+    throw new GradleException("Falten TAP_TO_PAY_MAVEN_USER i TAP_TO_PAY_MAVEN_PASSWORD (credencials Maven de SumUp per a com.sumup.tap-to-pay:utopia-sdk).")
+}
+
+repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://maven.sumup.com/releases' }
+    maven {
+        url 'https://tap-to-pay-sdk.fleet.live.sumup.net/'
+        credentials {
+            username = mavenUser
+            password = mavenPass
+        }
+    }
+}
+
+android {
+    namespace 'cat.omnium.sumuptaptopay'
+    compileSdkVersion 35
+
+    defaultConfig {
+        minSdkVersion 30
+        targetSdkVersion 35
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    lintOptions {
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+    implementation 'com.sumup.tap-to-pay:utopia-sdk:1.1.5'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}
