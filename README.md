@@ -46,9 +46,11 @@ npx cap sync android
 
 ## Configuració
 
-El plugin porta un token de SumUp i una affiliate key per defecte, així que
-l'app funciona sense configurar res. `openConfiguration()` permet canviar-los;
-el valor desat al dispositiu té prioritat sobre el per defecte.
+El token de SumUp **no** s'incrusta al codi ni es versiona: es desa al
+dispositiu des de la pantalla de configuració (`openConfiguration()`), a
+`SharedPreferences`. `initialize()` falla amb `NOT_CONFIGURED` fins que n'hi ha
+un. L'affiliate key sí que té un valor per defecte (identifica la integració,
+no és un secret) i també es pot canviar des de la pantalla.
 
 ```ts
 import { SumUpTapToPay } from 'sumup-tap-to-pay-oc';
@@ -345,3 +347,12 @@ await handle.remove();
 - `openConfiguration()` amb canvis desa i fa `tearDown()` de l'SDK perquè el
   token nou tingui efecte; cal tornar a cridar `initialize()`.
 - En web tots els mètodes llancen `unimplemented`.
+- **Android 17 / `hardened_malloc`**: la UI animada de l'SDK pot fer petar
+  l'app amb `hardened_malloc: fatal allocator error: detected write after free`
+  (RenderThread o Chrome_InProcGp). És una corrupció de memòria nativa de
+  l'SDK, no del plugin. Per provar-ho cal desactivar l'allocator endurit
+  d'aquesta app a *Opcions de desenvolupador → Hardened memory allocator*.
+  No és una solució per a producció: cal reportar-ho a SumUp.
+- Si l'usuari tanca la pantalla de pagament de l'SDK sense que arribi cap
+  esdeveniment terminal, el plugin resol la crida com a `PAYMENT_CANCELED`
+  2,5 s després que l'activitat amfitriona reprengui el focus.

@@ -22,7 +22,7 @@ class TapToPaySettingsActivity : AppCompatActivity() {
         val tokenInput = findViewById<EditText>(R.id.token_input)
         val affiliateInput = findViewById<EditText>(R.id.affiliate_input)
 
-        tokenInput.setText(prefs.getString(Prefs.KEY_TOKEN, null) ?: Prefs.DEFAULT_TOKEN)
+        tokenInput.setText(prefs.getString(Prefs.KEY_TOKEN, null).orEmpty())
         affiliateInput.setText(prefs.getString(Prefs.KEY_AFFILIATE, Prefs.DEFAULT_AFFILIATE))
 
         findViewById<Button>(R.id.cancel_button).setOnClickListener {

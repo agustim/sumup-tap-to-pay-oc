@@ -21,11 +21,13 @@ import com.sumup.taptopay.payment.domain.model.api.AffiliateModel
 import com.sumup.taptopay.payment.domain.model.api.CheckoutData
 import com.sumup.taptopay.payment.domain.model.api.PaymentEvent
 import com.sumup.taptopay.payment.domain.model.api.PaymentOutput
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
@@ -58,21 +60,23 @@ class SumUpTapToPayPlugin : Plugin() {
     private var initialized = false
     private var initJob: Job? = null
     private var paymentJob: Job? = null
+    private var pendingPaymentCall: PluginCall? = null
+    private var paymentUiShown = false
+    private var cancelWatchdogJob: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val prefs
         get() = getContext().getSharedPreferences(Prefs.FILE, Context.MODE_PRIVATE)
 
-    /** Token desat al dispositiu o, si no n'hi ha, el valor per defecte. */
-    private val token: String
+    /** Token desat al dispositiu; null si encara no s'ha configurat. */
+    private val token: String?
         get() = prefs.getString(Prefs.KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
-            ?: Prefs.DEFAULT_TOKEN
 
     @PluginMethod
     fun isConfigured(call: PluginCall) {
         call.resolve(
             JSObject()
-                .put("configured", token.isNotBlank())
+                .put("configured", !token.isNullOrBlank())
                 .put("affiliateKey", prefs.getString(Prefs.KEY_AFFILIATE, Prefs.DEFAULT_AFFILIATE)),
         )
     }
@@ -143,13 +147,15 @@ class SumUpTapToPayPlugin : Plugin() {
     @PluginMethod
     fun initialize(call: PluginCall) {
         if (initialized) return call.resolve(JSObject().put("ready", true))
+        val accessToken = token
+            ?: return call.reject("Cal configurar el token de SumUp", "NOT_CONFIGURED")
         val sdk = tapToPay ?: TapToPayApiProvider.provide(getContext().applicationContext).also {
             tapToPay = it
         }
         initJob = scope.launch {
             sdk.init(
                 object : AuthTokenProvider {
-                    override fun getAccessToken(): String = token
+                    override fun getAccessToken(): String = accessToken
                 },
             )
                 .onSuccess {
@@ -222,51 +228,49 @@ class SumUpTapToPayPlugin : Plugin() {
         val skipSuccess = call.getBoolean("skipSuccessScreen", true) ?: true
         val timeout = call.getInt("timeoutCardWaitSeconds")
 
+        paymentUiShown = false
+        pendingPaymentCall = call
         paymentJob = scope.launch {
             var done = false
+            fun finish(code: Int, message: String, output: PaymentOutput?, tapToPayCode: Int?) {
+                if (done) return
+                done = true
+                pendingPaymentCall = null
+                call.resolve(resultJs(code, message, ftid, output, tapToPayCode))
+            }
             try {
                 sdk.startPayment(checkout, skipSuccess, timeout).collect { event ->
                     notifyListeners("paymentEvent", eventJs(event))
                     if (done) return@collect
                     when (event) {
-                        is PaymentEvent.TransactionDone -> {
-                            done = true
-                            call.resolve(resultJs(1, "Pagament completat", ftid, event.paymentOutput, null))
-                        }
+                        is PaymentEvent.TransactionDone ->
+                            finish(1, "Pagament completat", event.paymentOutput, null)
                         is PaymentEvent.TransactionFailed -> {
-                            done = true
                             val ex: TapToPayException? = event.tapToPayException
-                            call.resolve(
-                                resultJs(
-                                    2,
-                                    ex?.message ?: "Pagament rebutjat",
-                                    ftid,
-                                    event.paymentOutput,
-                                    ex?.code,
-                                ),
-                            )
+                            finish(2, ex?.message ?: "Pagament rebutjat", event.paymentOutput, ex?.code)
                         }
-                        is PaymentEvent.TransactionCanceled -> {
-                            done = true
-                            call.resolve(resultJs(3, "Pagament cancel·lat", ftid, event.paymentOutput, null))
-                        }
-                        is PaymentEvent.TransactionResultUnknown -> {
-                            done = true
-                            call.resolve(
-                                resultJs(15, "Resultat desconegut de la transacció", ftid, event.paymentOutput, null),
-                            )
-                        }
+                        is PaymentEvent.TransactionCanceled ->
+                            finish(3, "Pagament cancel·lat", event.paymentOutput, null)
+                        is PaymentEvent.TransactionResultUnknown ->
+                            finish(15, "Resultat desconegut de la transacció", event.paymentOutput, null)
                         else -> Unit
                     }
                 }
                 if (!done) {
+                    done = true
+                    pendingPaymentCall = null
                     call.reject("El flux de pagament s'ha tancat sense resultat", "NO_RESULT")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 if (!done) {
+                    done = true
+                    pendingPaymentCall = null
                     call.reject(e.message ?: "Error de pagament", "PAYMENT_ERROR", errorJs(e))
                 }
             } finally {
+                pendingPaymentCall = null
                 paymentJob = null
             }
         }
@@ -287,7 +291,34 @@ class SumUpTapToPayPlugin : Plugin() {
         }
     }
 
+    /**
+     * L'SDK obre la seva PaymentActivity en un altre procés. Quan es tanca
+     * (cancel·lada o acabada) la nostra activitat reprèn; si en 2,5 s no ha
+     * arribat cap esdeveniment terminal, donem el pagament per cancel·lat.
+     * Sense això, tancar la pantalla de l'SDK deixa la promesa penjada.
+     */
+    override fun handleOnPause() {
+        if (paymentJob?.isActive == true) paymentUiShown = true
+    }
+
+    override fun handleOnResume() {
+        if (!paymentUiShown) return
+        paymentUiShown = false
+        val job = paymentJob ?: return
+        cancelWatchdogJob?.cancel()
+        cancelWatchdogJob = scope.launch {
+            delay(2500)
+            val pending = pendingPaymentCall
+            if (job.isActive && pending != null) {
+                pendingPaymentCall = null
+                pending.reject("Pagament cancel·lat", "PAYMENT_CANCELED")
+                job.cancel()
+            }
+        }
+    }
+
     override fun handleOnDestroy() {
+        cancelWatchdogJob?.cancel()
         paymentJob?.cancel()
         initJob?.cancel()
         scope.cancel()
