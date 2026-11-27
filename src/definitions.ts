@@ -46,7 +46,10 @@ export interface SumUpTapToPayPlugin {
   startPayment(options: StartPaymentOptions): Promise<PaymentResult>;
 
   /**
-   * Tanca l'SDK. Cal cridar-ho abans de tornar a configurar el token.
+   * Tanca la sessió de l'SDK (per exemple, en fer logout).
+   *
+   * No cal cridar-ho per canviar el token: el proveïdor el llegeix de les
+   * preferències a cada petició. Cal tornar a cridar `initialize()` després.
    *
    * @since 0.1.0
    */

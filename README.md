@@ -189,7 +189,10 @@ la promesa resol amb el primer esdeveniment terminal.
 tearDown() => Promise<void>
 ```
 
-Tanca l'SDK. Cal cridar-ho abans de tornar a configurar el token.
+Tanca la sessió de l'SDK (per exemple, en fer logout).
+
+No cal cridar-ho per canviar el token: el proveïdor el llegeix de les
+preferències a cada petició. Cal tornar a cridar `initialize()` després.
 
 **Since:** 0.1.0
 
@@ -359,9 +362,10 @@ await handle.remove();
 ## Notes
 
 - `initialize()` només es pot cridar un cop per sessió; una segona crida amb
-  l'SDK ja inicialitzat resol `ready: true` immediatament.
-- `openConfiguration()` amb canvis desa i fa `tearDown()` de l'SDK perquè el
-  token nou tingui efecte; cal tornar a cridar `initialize()`.
+  l'SDK ja inicialitzat resol `ready: true` immediatament. El proveïdor de
+  token llegeix el token desat a cada petició.
+- `openConfiguration()` amb canvis desa el token i l'affiliate key. El token
+  nou s'aplica a la propera petició sense reinicialitzar l'SDK.
 - En web tots els mètodes llancen `unimplemented`.
 - **Android 17 / `hardened_malloc`**: la UI animada de l'SDK pot fer petar
   l'app amb `hardened_malloc: fatal allocator error: detected write after free`

@@ -1,6 +1,6 @@
 {
   "name": "sumup-tap-to-pay-oc",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Capacitor plugin: SumUp Tap to Pay (phone as card terminal)",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",

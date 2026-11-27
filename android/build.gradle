@@ -73,7 +73,7 @@ android {
         minSdkVersion 30
         targetSdkVersion 35
         versionCode 1
-        versionName "0.1.4"
+        versionName "0.1.5"
         buildConfigField 'String', 'TOKENS_SUMUP_SECRET_KEY', "\"${sumupTokensForBuildConfig}\""
     }
 

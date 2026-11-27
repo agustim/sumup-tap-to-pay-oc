@@ -3,6 +3,7 @@ package cat.omnium.sumuptaptopay
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -27,8 +28,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 
@@ -54,15 +58,17 @@ class SumUpTapToPayPlugin : Plugin() {
     companion object {
         private const val CAMERA_ALIAS = "camera"
         private const val LOCATION_ALIAS = "location"
+        private const val TAG = "SumUpTapToPay"
+        private const val SDK_ALREADY_INITIALIZED = 107
     }
 
     private var tapToPay: TapToPay? = null
     private var initialized = false
-    private var initJob: Job? = null
     private var paymentJob: Job? = null
     private var pendingPaymentCall: PluginCall? = null
     private var paymentUiShown = false
     private var cancelWatchdogJob: Job? = null
+    private val sdkMutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val prefs
@@ -129,47 +135,89 @@ class SumUpTapToPayPlugin : Plugin() {
             call.resolve(JSObject().put("saved", false))
             return
         }
-        // El token pot haver canviat: cal tancar l'SDK abans de tornar-lo a inicialitzar.
-        paymentJob?.cancel()
-        val sdk = tapToPay
-        if (sdk == null) {
-            initialized = false
-            call.resolve(JSObject().put("saved", true))
-            return
-        }
         scope.launch {
-            sdk.tearDown()
-            initialized = false
-            call.resolve(JSObject().put("saved", true))
+            sdkMutex.withLock {
+                cancelPaymentLocked()
+                // El token es llegeix dinàmicament; no cal reinicialitzar l'SDK.
+                call.resolve(JSObject().put("saved", true))
+            }
         }
     }
 
     @PluginMethod
     fun initialize(call: PluginCall) {
-        if (initialized) return call.resolve(JSObject().put("ready", true))
-        val accessToken = token
-            ?: return call.reject("Cal configurar el token de SumUp", "NOT_CONFIGURED")
-        val sdk = tapToPay ?: TapToPayApiProvider.provide(getContext().applicationContext).also {
-            tapToPay = it
-        }
-        initJob = scope.launch {
-            sdk.init(
-                object : AuthTokenProvider {
-                    override fun getAccessToken(): String = accessToken
-                },
-            )
-                .onSuccess {
-                    initialized = true
+        scope.launch {
+            sdkMutex.withLock {
+                val initialToken = token
+                if (initialToken == null) {
+                    call.reject("Cal configurar el token de SumUp", "NOT_CONFIGURED")
+                    return@withLock
+                }
+                if (initialized) {
                     call.resolve(JSObject().put("ready", true))
+                    return@withLock
                 }
-                .onFailure {
-                    initialized = false
-                    call.reject(
-                        it.message ?: "No s'ha pogut inicialitzar el Tap to Pay",
-                        "INIT_FAILED",
-                        errorJs(it),
-                    )
+                val sdk = tapToPay ?: TapToPayApiProvider.provide(getContext().applicationContext).also {
+                    tapToPay = it
                 }
+                val tokenPrefs = getContext().applicationContext
+                    .getSharedPreferences(Prefs.FILE, Context.MODE_PRIVATE)
+                val provider = object : AuthTokenProvider {
+                    // El token es llegeix a cada petició: canviar-lo a
+                    // Configura no obliga a reinicialitzar l'SDK.
+                    override fun getAccessToken(): String =
+                        tokenPrefs.getString(Prefs.KEY_TOKEN, null)
+                            ?.takeIf { it.isNotBlank() }
+                            ?: initialToken
+                }
+                val result = sdk.init(provider)
+                if (result.isFailure && isAlreadyInitialized(result.exceptionOrNull())) {
+                    // Una altra instància del plugin ja havia inicialitzat
+                    // l'SDK en aquest procés; es reutilitza la sessió.
+                    initialized = true
+                    Log.w(TAG, "L'SDK ja estava inicialitzat; es reutilitza la sessió")
+                    call.resolve(JSObject().put("ready", true))
+                    return@withLock
+                }
+                result
+                    .onSuccess {
+                        initialized = true
+                        Log.d(TAG, "init correcte")
+                        call.resolve(JSObject().put("ready", true))
+                    }
+                    .onFailure {
+                        initialized = false
+                        val code = (it as? TapToPayException)?.code ?: 0
+                        Log.w(TAG, "init fallit: ${it::class.java.simpleName} ($code)")
+                        call.reject(
+                            it.message ?: "No s'ha pogut inicialitzar el Tap to Pay",
+                            "INIT_FAILED",
+                            errorJs(it),
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun isAlreadyInitialized(error: Throwable?): Boolean =
+        error is TapToPayException && error.code == SDK_ALREADY_INITIALIZED
+
+    private suspend fun cancelPaymentLocked() {
+        cancelWatchdogJob?.cancel()
+        cancelWatchdogJob = null
+        paymentJob?.cancelAndJoin()
+        paymentJob = null
+        pendingPaymentCall = null
+        paymentUiShown = false
+    }
+
+    private suspend fun tearDownSdkLocked() {
+        initialized = false
+        val sdk = tapToPay ?: return
+        val result = sdk.tearDown()
+        result.exceptionOrNull()?.let {
+            val code = (it as? TapToPayException)?.code ?: 0
+            Log.w(TAG, "tearDown: ${it::class.java.simpleName} ($code)")
         }
     }
 
@@ -278,16 +326,12 @@ class SumUpTapToPayPlugin : Plugin() {
 
     @PluginMethod
     fun tearDown(call: PluginCall) {
-        val sdk = tapToPay
-        paymentJob?.cancel()
-        if (sdk == null) {
-            initialized = false
-            return call.resolve()
-        }
         scope.launch {
-            sdk.tearDown()
-            initialized = false
-            call.resolve()
+            sdkMutex.withLock {
+                cancelPaymentLocked()
+                tearDownSdkLocked()
+                call.resolve()
+            }
         }
     }
 
@@ -320,7 +364,6 @@ class SumUpTapToPayPlugin : Plugin() {
     override fun handleOnDestroy() {
         cancelWatchdogJob?.cancel()
         paymentJob?.cancel()
-        initJob?.cancel()
         scope.cancel()
     }
 
