@@ -34,3 +34,7 @@ local.properties
 
 # Keystore files
 #*.jks
+
+# Secrets locals dels tokens de SumUp (mai versionar)
+.env
+.env.*

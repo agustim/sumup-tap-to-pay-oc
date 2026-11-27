@@ -52,6 +52,22 @@ dispositiu des de la pantalla de configuració (`openConfiguration()`), a
 un. L'affiliate key sí que té un valor per defecte (identifica la integració,
 no és un secret) i també es pot canviar des de la pantalla.
 
+### Tokens de prova des de l'entorn
+
+La pantalla de configuració pot llistar tokens de prova amb títol. Es
+defineixen a `TOKENS_SUMUP_SECRET_KEY` amb el format
+`títol:token|títol:token`:
+
+```bash
+TOKENS_SUMUP_SECRET_KEY=prod:sup_sk_…|dev:sup_sk_…
+```
+
+Els separadors `:` i `|` no poden aparèixer dins del token. Es llegeix, per
+ordre: la variable d'entorn, la propietat de Gradle `TOKENS_SUMUP_SECRET_KEY`
+i un fitxer `.env.local` a l'arrel de l'app (o del plugin). Aquest fitxer ha
+d'estar fora del control de versions. Si no hi ha cap token definit, la
+pantalla només permet escriure'l a mà.
+
 ```ts
 import { SumUpTapToPay } from 'sumup-tap-to-pay-oc';
 
